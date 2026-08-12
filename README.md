@@ -40,14 +40,14 @@ terms) by the decoder's context window. sanar uses the glossary twice:
 **As a plugin** (recommended — gives you `/sanar` and keeps updates one command away):
 
 ```
-/plugin marketplace add <your-gh-user>/sanar
+/plugin marketplace add gili8420/sanar
 /plugin install sanar@sanar
 ```
 
 **As a plain skill:**
 
 ```bash
-git clone --depth 1 https://github.com/<your-gh-user>/sanar ~/.sanar-src
+git clone --depth 1 https://github.com/gili8420/sanar ~/.sanar-src
 mkdir -p ~/.claude/skills
 ln -sfn ~/.sanar-src/skills/sanar ~/.claude/skills/sanar
 ```
