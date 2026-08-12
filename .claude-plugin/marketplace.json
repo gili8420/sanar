@@ -1,0 +1,13 @@
+{
+  "name": "sanar",
+  "owner": {
+    "name": "sanar authors"
+  },
+  "plugins": [
+    {
+      "name": "sanar",
+      "source": "./",
+      "description": "Context-aware local transcription with Whisper large-v3: multi-language passes, glossary priming, verbatim merge."
+    }
+  ]
+}
