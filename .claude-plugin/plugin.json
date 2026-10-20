@@ -1,6 +1,15 @@
 {
   "name": "sanar",
-  "description": "Context-aware local transcription: stitch audio, prime Whisper large-v3 with a project glossary, run one pass per language, merge verbatim.",
-  "version": "0.1.0",
-  "keywords": ["transcription", "whisper", "audio", "local", "gpu", "glossary"]
+  "description": "Context-aware local transcription: stitch audio, label speakers with pyannote, prime Whisper large-v3 with a project glossary, run one pass per language, merge verbatim.",
+  "version": "0.2.0",
+  "keywords": [
+    "transcription",
+    "whisper",
+    "audio",
+    "local",
+    "gpu",
+    "glossary",
+    "diarization",
+    "speakers"
+  ]
 }

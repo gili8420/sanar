@@ -6,13 +6,37 @@
 
 | Detected | Backend | Device | Speed, large-v3, 1 h audio |
 |---|---|---|---|
-| macOS + Apple Silicon | `mlx-whisper` | Metal (unified memory) | ~4-8 min |
+| macOS + Apple Silicon | `mlx-whisper` | Metal (unified memory) | ~10 min for `ru,en` together (M1 Pro, measured) |
 | Linux / WSL2 + NVIDIA | `faster-whisper` | CUDA fp16 | ~2-5 min |
 | everything else | `faster-whisper` | CPU int8 | 40 min - 3 h |
 
 Both install as pip wheels into `$SANAR_HOME/venv`. Nothing is compiled.
 
 Override with `SANAR_BACKEND=mlx|faster`, `SANAR_DEVICE`, `SANAR_COMPUTE`.
+
+On MLX one process runs every language: each chunk is encoded once and the encoder output is
+decoded per language, `SANAR_BATCH` chunks at a time. faster-whisper uses its
+`BatchedInferencePipeline`, which re-encodes per language.
+
+## Diarization
+
+`diarize.py` runs pyannote `community-1` (pyannote.audio 4) from the ungated mirror
+`pyannote-community/speaker-diarization-community-1` (CC-BY-4.0): no Hugging Face token,
+~30 MB, downloaded once. Device: MPS on Apple Silicon, CUDA when present, else CPU. Measured on
+an M1 Pro: ~16x realtime on MPS, ~1x on CPU — the speaker-embedding step is 90% of the time.
+Larger `embedding_batch_size` or a coarser step made MPS slower, not faster.
+
+Why this model: it is the open model with the best support for transcripts (exclusive
+single-speaker turns, per-speaker embeddings for voice matching, speaker-count hints). DiariZen
+scores better in benchmarks but its weights are CC-BY-NC; NVIDIA's Sortformer caps at four
+speakers and wants NeMo on a GPU.
+
+Synthetic voices are a poor test of it: on macOS `say` voices it merged two different female
+voices into one speaker. Judge it on real recordings.
+
+`objc: Class AVF... is implemented in both` at import time is Homebrew's ffmpeg and PyAV's
+bundled one meeting in one process. sanar keeps diarization (torch) and transcription
+(mlx / PyAV) in separate processes, so it is noise there.
 
 ## `setup` appears to hang with 0% CPU
 
@@ -104,28 +128,38 @@ Intel Arc / oneAPI: not supported by either backend. CPU.
   total, expect swapping; suggest `large-v3-turbo`.
 - **Disk** — ~3 GB per model in the Hugging Face cache (`~/.cache/huggingface`), fetched
   once on the first pass. Warn the user before that download starts.
-- **Long audio** — memory use is bounded by the 30 s window, so hours of audio are fine;
-  time is the only cost. It scales linearly, so measure one pass and extrapolate.
+- **Batch** — on large-v3 each chunk in a decoding batch holds ~250 MB of cross-attention
+  cache (32 layers × 1500 audio frames). The default, 16 with 16 GB of RAM or more and 8
+  below, fits next to the 3 GB model; turbo's 4 decoder layers make the batch nearly free.
+- **Long audio** — memory use is bounded by the batch, so hours of audio are fine; time is
+  the only cost. It scales linearly, so measure one run and extrapolate.
 
 ## Model choice
 
 - `large-v3` (default) — best on rare terms and code-switching. This skill exists for
   exactly that, so it is the default.
-- `large-v3-turbo` — ~4-8x faster, noticeably weaker on rare proper nouns. A time
-  concession, not a free win. Offer it; do not silently substitute it.
+- `large-v3-turbo` — same 32-layer encoder, 4 decoder layers instead of 32: ~2x faster end
+  to end in sanar on Apple Silicon, noticeably weaker on rare proper nouns, and on mixed ru/en
+  speech its `en` pass drifts into Russian and drops English. A time concession, not a free
+  win. Offer it; do not silently substitute it.
 - Anything smaller defeats the purpose of a glossary-primed run.
 
-Set via `SANAR_MODEL`. On MLX use the `mlx-community/whisper-*` repo names; on
-faster-whisper use the plain `large-v3` / `large-v3-turbo` names or a local CTranslate2 dir.
+Quantized MLX weights do not help here: with batched decoding the GPU is compute-bound, and
+`whisper-large-v3-mlx-8bit` / `-4bit` ran slower than fp16 (67 s / 70 s vs 56 s on the same
+6-minute test, same recall).
 
-## Decoder loops
+Set via `SANAR_MODEL`. On MLX the short names map to `mlx-community` repos
+(`large-v3` → `whisper-large-v3-mlx`, `large-v3-turbo` / `turbo` → `whisper-large-v3-turbo`);
+a name with a `/` is used as a repo as is. On faster-whisper use the plain `large-v3` /
+`large-v3-turbo` names or a local CTranslate2 dir.
 
-Both backends condition each 30 s window on the previous window's text — that is how a
-correctly-spelled glossary term propagates through the whole file, and it is why this is on
-by default. The cost is a rare degenerate loop where one phrase repeats for minutes.
+## Chunks, prompts and decoder loops
 
-`faster-whisper` mitigates it with VAD plus temperature fallback and a prompt reset.
-`mlx-whisper` has temperature fallback only.
+Every chunk (at most 28 s, cut along speaker turns) is decoded on its own with the glossary
+as its prompt. There is no conditioning on the previous chunk's text, so the glossary never
+scrolls out of the window and a degenerate loop cannot spread past one chunk.
 
-If a pass loops: re-run it with `--no-condition` and keep **both** outputs. The looping pass
-is often still correct up to the loop, and the merge can use that part.
+A chunk whose output looks like a loop (compression ratio > 2.4), has low confidence
+(avg logprob < -1) or hits the token limit is redone automatically with temperature fallback
+and listed under `fallback` in the pass sidecar. Silence and a recited glossary (Whisper
+reading the prompt back over near-silence) are dropped and listed under `dropped`.

@@ -19,6 +19,8 @@ the model. You are forbidden from fixing mistakes made by the speaker.
 | Speaker repeats themselves three times | **Keep** all three |
 | Speaker uses the wrong term for their own system | **Keep** — note it in merge-notes |
 | One pass invented a sentence the others don't have | **Drop** — hallucination |
+| 1-5 words at a speaker change carry the next label but finish the previous sentence | Fix — boundary fragment, note it |
+| An utterance of 6+ words has a label that looks wrong to you | **Keep** the label — note the doubt |
 
 If you are unsure which class an error belongs to, it belongs to the speaker. Keep it.
 
@@ -38,9 +40,9 @@ mode. Resist it every single time.
 
 ### 1. Align
 
-Segment timestamps are the join key. Passes segment differently, so align by overlapping
-time spans, not by line number. Work through the timeline once, front to back, in windows
-of a few segments.
+Every pass is cut into the same chunks: the `@cNNN hh:mm:ss-hh:mm:ss` headers are identical
+in all passes. Merge chunk by chunk, front to back. Inside a chunk, align the candidates by
+word order and line timestamps.
 
 Use `audio.chapters.txt` to insert `## <source file>` headers at the right offsets.
 
@@ -74,9 +76,40 @@ Remove only what is unambiguously not speech:
   "Продолжение следует", channel names, "Субтитры сделал ...", ad reads — when the audio
   clearly has no such speech.
 - Text generated over silence or music (a common VAD-gap artifact).
+- The glossary recited back: a run of prompt terms with no sentence around them. The pass
+  sidecar's `dropped` list already holds the chunks the script caught (`prompt-echo`,
+  `silence`); confirm each against the other passes before you accept the drop.
 
 Everything else stays, including filler, false starts, and stutters that the passes
 captured. Do not add filler that no pass captured.
+
+### 3a. Speakers
+
+The labels `S1`, `S2`, ... come from `speakers.json`: one diarization run over the whole
+recording. A pass only attaches its words to those turns through word timings. When a pass
+skipped speech (typically the other language), its timings stretch across the gap and its
+labels around the gap are wrong — take the labels from the pass whose chunk is most complete,
+and check them against the turn list in `speakers.json`.
+
+A label is metadata, not speech, but the same discipline applies:
+
+- You may move a turn boundary only for a fragment of **1-5 words directly at a speaker
+  change** — a sentence tail that slid onto the next turn, or a backchannel ("да", "угу",
+  "right") inside another speaker's line. Every such move goes into merge-notes.
+  The typical case: a pass skipped another speaker's turn, and the first word after the gap
+  landed in that turn — `[00:00:28] S2: Pull` followed by `[00:00:33] S1: request уже на
+  ревью...`. The word belongs to the line after it.
+- Never relabel an utterance of 6 or more words, never merge two speakers, never invent one.
+  If a long utterance looks mislabelled, keep the label and note the doubt. (LLMs that freely
+  re-attribute speakers make diarization worse: DiarizationLM, arXiv 2401.03506, measured
+  word-level speaker errors doubling with a zero-shot LLM; its 2026 model edits only 1-5-word
+  fragments and treats longer utterances as anchors.)
+- Names: `voice.band` = `matched` in `speakers.json` → use the name; `review` → `S2 (Миша?)`;
+  `unmatched` → keep `S2`. A name you infer from the content (someone is addressed by name
+  right before the turn) goes only into the speaker table, with the evidence:
+  `S2 → Миша? (обращение в 00:12:03)`. Never put an inferred name on lines in the body.
+- `speakers.json` `overlaps` are spans of simultaneous speech. The quieter speaker's words may
+  sit inside the louder speaker's line; list those spans in merge-notes, don't guess a split.
 
 ### 4. Mark uncertainty, don't resolve it silently
 
@@ -101,10 +134,10 @@ answer.
 `transcript.md`:
 
 - `## <source file>` per stitched input, at its chapter offset.
-- `[hh:mm:ss] text` lines, wrapped to the segment structure you merged.
-- Speaker labels only if the passes actually support them (`**S1:**`); never invent
-  speakers or attribute lines by guessing.
-- A short front-matter block: total duration, source files, languages, model, glossary size.
+- `[hh:mm:ss] **S1:** text` lines, one per speaker turn; the label as section 3a decides.
+- A short front-matter block: total duration, source files, languages, model, glossary size,
+  and the speaker table: label, name (with band and similarity, or the inferred-name evidence),
+  seconds spoken.
 - Nothing else. No summary, no key points, no action items, no editorial notes in the body.
   If the user wants a summary, that is a separate ask, in a separate file.
 
@@ -114,6 +147,9 @@ answer.
   reason (which rule above).
 - Every artifact stripped, with its span.
 - Every `[?]` and `[unintelligible]` left in.
+- Every moved speaker boundary (timestamp, words, from → to), every doubted long-utterance
+  label, every overlap span.
+- Chunks the passes redid with fallback or dropped (`fallback`, `dropped` in the sidecars).
 - Glossary terms that appeared in the audio but were dropped from the prompt (from the
   pass sidecar JSON) — these are where residual errors concentrate.
 - Places where the speaker contradicted the documents. **Listed here, never fixed in the
@@ -130,3 +166,6 @@ decision you made without re-listening.
 - Is there a summary, conclusion, or "key takeaway" anywhere in the body? Delete it.
 - Is the transcript materially shorter than the longest pass? You dropped content. Find it.
 - Does every glossary term appear with one consistent spelling throughout?
+- Did you relabel any utterance of 6+ words, or put an inferred name on a body line? Revert.
+- Does every `@cNNN` chunk of the passes end up somewhere in the transcript (or in
+  merge-notes as dropped)?

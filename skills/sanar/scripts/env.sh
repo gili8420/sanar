@@ -104,6 +104,7 @@ probe() {
     kv venv_python "$("$PY" -V 2>&1)"
     local pkg=faster_whisper; [[ "$BACKEND" == mlx ]] && pkg=mlx_whisper
     if "$PY" -c "import $pkg" 2>/dev/null; then kv backend_pkg ready; else kv backend_pkg MISSING; fi
+    if "$PY" -c "import pyannote.audio" 2>/dev/null; then kv diarize_pkg ready; else kv diarize_pkg MISSING; fi
   else
     kv venv missing
   fi
@@ -149,11 +150,14 @@ setup() {
     echo "  interpreter: $src" >&2
   fi
 
-  local pkgs=()
+  # pyannote.audio: diarization (pulls torch; runs on MPS / CUDA / CPU).
+  local pkgs=("pyannote.audio>=4,<5")
+  # Pinned: transcribe.py calls mlx-whisper's decode/find_alignment internals and
+  # faster-whisper's batched clip_timestamps.
   if [[ "$BACKEND" == mlx ]]; then
-    pkgs=(mlx-whisper)
+    pkgs+=("mlx-whisper>=0.4.3,<0.5")
   else
-    pkgs=(faster-whisper)
+    pkgs+=("faster-whisper>=1.1,<2")
     # WSL/Linux CUDA: userspace cuBLAS+cuDNN as wheels. transcribe.py preloads them,
     # so no LD_LIBRARY_PATH and no CUDA toolkit install.
     [[ "$DEVICE" == cuda ]] && pkgs+=("nvidia-cublas-cu12" "nvidia-cudnn-cu12>=9,<10")

@@ -7,7 +7,7 @@
     {
       "name": "sanar",
       "source": "./",
-      "description": "Context-aware local transcription with Whisper large-v3: multi-language passes, glossary priming, verbatim merge."
+      "description": "Context-aware local transcription with speaker labels: Whisper large-v3 multi-language passes, pyannote diarization, glossary priming, verbatim merge."
     }
   ]
 }

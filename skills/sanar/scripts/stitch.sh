@@ -17,25 +17,20 @@ done
 dur() { ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$1" 2>/dev/null || echo 0; }
 ts() { awk -v s="$1" 'BEGIN{printf "%02d:%02d:%02d", int(s/3600), int(s%3600/60), int(s%60)}'; }
 
-if [[ ${#files[@]} -eq 1 ]]; then
-  ffmpeg -nostdin -y -loglevel error -i "${files[0]}" \
-    -vn -ar 16000 -ac 1 -c:a pcm_s16le "$out"
-else
-  # concat filter, not the concat demuxer: it re-decodes, so mixed containers/codecs are fine.
-  args=(); filt=""
-  for i in "${!files[@]}"; do args+=(-i "${files[$i]}"); filt+="[$i:a]"; done
-  ffmpeg -nostdin -y -loglevel error "${args[@]}" \
-    -filter_complex "${filt}concat=n=${#files[@]}:v=0:a=1[a]" -map '[a]' \
-    -ar 16000 -ac 1 -c:a pcm_s16le "$out"
-fi
-
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
 map="${out%.*}.chapters.txt"
 : > "$map"
 off=0
-for f in "${files[@]}"; do
-  printf '%s\t%s\n' "$(ts "$off")" "$f" >> "$map"
-  off=$(awk -v a="$off" -v b="$(dur "$f")" 'BEGIN{print a+b}')
+for i in "${!files[@]}"; do
+  # Decode each source on its own and take the offset from the decoded PCM: a container's
+  # duration can belong to a longer video stream and would shift every later chapter.
+  ffmpeg -nostdin -y -loglevel error -i "${files[$i]}" -vn -ar 16000 -ac 1 -c:a pcm_s16le "$tmp/$i.wav"
+  printf '%s\t%s\n' "$(ts "$off")" "${files[$i]}" >> "$map"
+  off=$(awk -v a="$off" -v b="$(dur "$tmp/$i.wav")" 'BEGIN{print a+b}')
+  printf "file '%s'\n" "$tmp/$i.wav" >> "$tmp/list.txt"
 done
+ffmpeg -nostdin -y -loglevel error -f concat -safe 0 -i "$tmp/list.txt" -c copy "$out"
 
 total=$(dur "$out")
 printf 'out=%s\nduration=%s\nduration_hms=%s\nsources=%d\nchapters=%s\n' \
